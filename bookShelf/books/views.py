@@ -19,7 +19,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth import authenticate, login, logout
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from collections import OrderedDict
+from collections import OrderedDict,defaultdict
 
 # Custom Modules
 from books import JSONcreator as jsc
@@ -62,6 +62,52 @@ TIMESTAMP = 'timestamp'
 def index(request):
     return render(request, 'books/browse.html')
 
+def generateOCR(filename):
+    """
+        generate tags from the relevant words in a file, to be stored in tags.
+    """
+    tags=""
+    if os.path.getsize(filename) / 1024 > 1024:
+        return tags;
+    os.system("bash ocr.sh",filename)
+    # execute bash commands
+    with f as open(filename+".ocr",'r'):
+        tagdict=defaultdict(int)
+        elems=[]
+        for line in f:
+            if(len(line)>4):
+                tagdict[line]+=1;
+        for el in tagdict:
+            elems.append((tagdict[el],el));
+        elems = sorted(elems)
+        i=0;
+        while i < min(50,len(elems)):
+            if i != 0:
+                tags+=',';
+            tags += elems[i][1]
+            i+=1;
+        # return tags;
+    os.system("rm "+filename+".ocr")
+    return tags
+def read_tags(filename):
+    tags={} # returns a set
+    for line in open(filename,'r'):
+        tags.add(line)
+    return tags;
+def checkDuplicates(fileMeta, destination):
+    th = 0.80; # threshold for comparing
+    file_tags=read_tags(os.path.join(UNAPPROVED_DIR, fileMeta));
+    for file in destination:
+        if(".meta" in file):
+            min_len = len(file_tags);
+            tags=read_tags(os.path.join(destination,file))
+            total_tags = file_lags + len(tags)
+            min_len = min(min_len,len(tags))
+            matches = total_tags - len(tags|file_tags)
+            if(matches > th*min_len):
+                return True
+    return False
+
 
 def getFileName(course_code, sem, year, type_file, prof, filename, other):
     if not validator(course_code, sem, year, type_file, prof, filename, other):
@@ -84,7 +130,27 @@ def getFileName(course_code, sem, year, type_file, prof, filename, other):
     else:
         dirPath = dirPath + SEPARATOR + "Professors" + SEPARATOR + prof + SEPARATOR + type_file
         toWriteFileName = dirPath + SEPARATOR + fileNamePrefix + "-" + origFileName + fileExtension
-    return toWriteFileName
+    # removing the characters causing flow break in http requests from filename;
+    filename=toWriteFileName;
+    modifiedName="";i=0;
+    while(i<len(filename)):
+        if(filename[i]=='#'):
+            modifiedName= modifiedName + "&#35;"
+        else if(filename[i]=='<'):
+            modifiedName= modifiedName + "&lt;"
+        else if(filename[i]=='>'):
+            modifiedName= modifiedName + "&gt;"
+        else if(filename[i]=='&'):
+            modifiedName= modifiedName + "&amp;"
+        else if(filename[i]=='"'):
+            modifiedName= modifiedName + "&quot;"
+        else if(filename[i]=='\''):
+            modifiedName= modifiedName + "&apos;"
+        else:
+            modifiedName = modifiedName + filename[i];
+        i=i+1;
+    filename = modifiedName;
+    return filename;
 
 
 def upload(request):
@@ -115,6 +181,7 @@ def upload(request):
             filename = getFileName(course_code, sem, year, type_file, prof, document.name, other_text)
             if filename == "None":
                 return HttpResponse(content="Bad Request, incorrect form data", status=400)
+
             directory = os.path.dirname(os.path.join(UNAPPROVED_DIR, filename))
             if not os.path.exists(directory):
                 os.makedirs(directory)
@@ -123,7 +190,7 @@ def upload(request):
             ## Make sure that two files in unapproved directory don't have same name
             if os.path.isfile(file_path):
                 i=1
-                file_root = '.'.join(file_path.split('.')[:-1]) 
+                file_root = '.'.join(file_path.split('.')[:-1])
                 ext = file_path.split('.')[-1]
                 while os.path.isfile(file_path):
                     file_path = file_root + '(' + str(i) + ')' + '.' + ext
@@ -133,8 +200,9 @@ def upload(request):
             for chunk in document.chunks():
                 destination.write(chunk)
             destination.close()
-            
             tags=taglist[j]
+            if(type_file=='Assignments' or type_file=='Lectures' or type_file=='Tutorials'):
+                tags=tags+generateOCR(filename);
             keys = []
             destination_meta = file_path + '.meta'
             if os.path.isfile(destination_meta):
@@ -176,14 +244,14 @@ def download_course(request):
         stats[course]["last"] = datetime.now().strftime("%Y%m%d")
         with open(STATS_FILE, "w") as file:
             json.dump(stats, file)
-        
+
         loc = DATABASE_DIR.split(os.sep)
         path = '/'.join(loc)
         return redirect('/' + path + '/' + parent_dir + '/' + course + '.zip')
-    
+
     except OSError as e:
         return HttpResponse(status=400,content="Bad Request")
-    
+
 
 
 @login_required
@@ -248,11 +316,13 @@ def approve_unapproved_document(request):
         return HttpResponse(content="Bad Request, name parameter missing", status=400)
 
     fileMeta = fileName + '.meta'
-    
+
     seperatedlist = fileName.split(SEPARATOR)
     destination = DATABASE_DIR
     for directory in seperatedlist:
         destination = os.path.join(destination, directory)
+    if checkDuplicates(fileMeta, destination): # check for duplicates in destination folder
+        return remove_unapproved_document(request);
     destination_meta = destination + '.meta'
 
     if os.path.isfile(os.path.join(UNAPPROVED_DIR, fileName)) and os.path.isfile(os.path.join(UNAPPROVED_DIR, fileMeta)):
@@ -322,7 +392,7 @@ def generate_path_meta_tags(inner_path):
     tags = []
     inner_path = os.path.split(inner_path)[0]
     while os.path.split(inner_path)[0] is not '':
-        tag = os.path.split(inner_path)[1] 
+        tag = os.path.split(inner_path)[1]
         if tag not in EXCLUDED_TAGS:
             tags.append(tag)
         inner_path = os.path.split(inner_path)[0]
@@ -445,18 +515,18 @@ def build_meta_files():
                 file_loc = os.path.join(root, filename)
                 metafile_loc = file_loc + '.meta'
 
-                ## Read tags already added by the user                 
+                ## Read tags already added by the user
                 old_tags = []
                 if os.path.isfile(metafile_loc):
-                    with open(metafile_loc,"r") as f: 
+                    with open(metafile_loc,"r") as f:
                         old_tags = f.readlines()
                     old_tags = [tag.strip() for tag in old_tags]
-            
+
                 new_tags = generate_path_meta_tags(os.path.relpath(metafile_loc, BULK_UP_DIR))
                 final_tags = old_tags + list( set(new_tags) - set(old_tags))
                 with open(metafile_loc,"w") as f:
                     f.write('\n'.join(final_tags))
-                    
+
 
 def add_tasks(type_of_change, paths):
     """
@@ -590,5 +660,3 @@ def validator(course_code, sem, year, type_file, prof, filename, other):
         result = False
 
     return result
-
-
