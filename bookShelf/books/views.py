@@ -71,7 +71,7 @@ def generateOCR(filename):
         return tags;
     os.system("bash ocr.sh",filename)
     # execute bash commands
-    with f as open(filename+".ocr",'r'):
+    with open(filename+".ocr",'r') as f:
         tagdict=defaultdict(int)
         elems=[]
         for line in f:
@@ -134,17 +134,17 @@ def getFileName(course_code, sem, year, type_file, prof, filename, other):
     filename=toWriteFileName;
     modifiedName="";i=0;
     while(i<len(filename)):
-        if(filename[i]=='#'):
+        if filename[i]=='#':
             modifiedName= modifiedName + "&#35;"
-        else if(filename[i]=='<'):
+        elif filename[i]=='<':
             modifiedName= modifiedName + "&lt;"
-        else if(filename[i]=='>'):
+        elif filename[i]=='>':
             modifiedName= modifiedName + "&gt;"
-        else if(filename[i]=='&'):
+        elif filename[i]=='&':
             modifiedName= modifiedName + "&amp;"
-        else if(filename[i]=='"'):
+        elif filename[i]=='"':
             modifiedName= modifiedName + "&quot;"
-        else if(filename[i]=='\''):
+        elif filename[i]=='\'':
             modifiedName= modifiedName + "&apos;"
         else:
             modifiedName = modifiedName + filename[i];
